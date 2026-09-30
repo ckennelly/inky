@@ -10,6 +10,7 @@ from gpiod.line import Bias, Direction, Value
 from PIL import Image
 
 from . import eeprom
+from ._spectra6 import palette_image_to_inks
 
 BLACK = 0
 WHITE = 1
@@ -368,6 +369,18 @@ class Inky:
         if not image.size == (self.width, self.height):
             raise ValueError(f"Image must be ({self.width}x{self.height}) pixels!")
 
+        # Remap our sequential palette colours to display native (missing colour 4)
+        remap = numpy.array([0, 1, 2, 3, 5, 6])
+
+        # A palette image using at most six colours is already dithered for
+        # the display: map each palette entry to its ink and leave its pixels
+        # alone.
+        if image.mode == "P":
+            inks = palette_image_to_inks(image, self.SATURATED_PALETTE, self.DESATURATED_PALETTE)
+            if inks is not None:
+                self.buf = remap[inks.reshape((self.rows, self.cols))]
+                return
+
         dither = Image.Dither.FLOYDSTEINBERG
 
         # Image size doesn't matter since it's just the palette we're using
@@ -394,8 +407,6 @@ class Inky:
 
         image = image.convert("RGB").quantize(6, palette=palette_image, dither=dither)
 
-        # Remap our sequential palette colours to display native (missing colour 4)
-        remap = numpy.array([0, 1, 2, 3, 5, 6])
         self.buf = remap[numpy.array(image, dtype=numpy.uint8).reshape((self.rows, self.cols))]
 
     def _spi_write_bytes(self, data):
