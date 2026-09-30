@@ -2,7 +2,19 @@
 import numpy
 
 
-def _nearest_inks(colours, saturated, desaturated):
+def check_palette(palette):
+    """Six (r, g, b) colours as a list of tuples, or ValueError."""
+    try:
+        colours = [tuple(int(c) for c in rgb) for rgb in palette]
+    except (TypeError, ValueError):
+        raise ValueError("palette must be six (r, g, b) colours") from None
+    if len(colours) != 6 or any(len(c) != 3 or not all(0 <= v <= 255 for v in c)
+                                for c in colours):
+        raise ValueError("palette must be six (r, g, b) colours with values 0-255")
+    return colours
+
+
+def _nearest_inks(colours, saturated, desaturated, extra=None):
     """Index of the nearest ink for each RGB colour.
 
     To these drivers an ink is not a single colour: set_image() dithers
@@ -22,10 +34,14 @@ def _nearest_inks(colours, saturated, desaturated):
         # Black is the same in both palettes, so its segment is a point.
         t = numpy.zeros(len(colours)) if length2 == 0.0 else numpy.clip((colours - a) @ ab / length2, 0.0, 1.0)
         distance[:, ink] = numpy.linalg.norm(colours - (a + t[:, None] * ab), axis=1)
+        if extra is not None:
+            # A caller's own palette is another place this ink can be.
+            point = numpy.linalg.norm(colours - numpy.asarray(extra[ink], dtype=numpy.float64), axis=1)
+            distance[:, ink] = numpy.minimum(distance[:, ink], point)
     return distance.argmin(axis=1)
 
 
-def palette_image_to_inks(image, saturated, desaturated):
+def palette_image_to_inks(image, saturated, desaturated, extra=None):
     """Map a palette-mode image straight to ink indices, if it is one.
 
     An image using at most six palette indices is taken to be already
@@ -38,6 +54,10 @@ def palette_image_to_inks(image, saturated, desaturated):
     Only indices that pixels actually use are counted, so padding a palette
     out to 256 entries does not turn an unused (0, 0, 0) into a seventh
     colour.
+
+    `extra`, the caller's own palette if it passed one, counts as a further
+    colour for each ink, so an image labelled with that palette round-trips
+    even where its colours would be ambiguous against the driver's own.
 
     Returns ink indices (0-5) shaped like the image, or None when the image
     uses more than six colours, or colours it has no palette entry for, and
@@ -60,6 +80,6 @@ def palette_image_to_inks(image, saturated, desaturated):
         if len(flat) < 3 * (int(used.max()) + 1):
             return None
         colours = [flat[3 * i:3 * i + 3] for i in used]
-        lut[used] = _nearest_inks(colours, saturated, desaturated)
+        lut[used] = _nearest_inks(colours, saturated, desaturated, extra)
 
     return lut[numpy.asarray(image, dtype=numpy.uint8)]

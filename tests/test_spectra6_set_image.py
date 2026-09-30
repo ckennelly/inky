@@ -150,3 +150,67 @@ def test_p_image_without_palette_uses_index_order(GPIO, spidev, smbus2, name, si
     display.set_image(image)
     assert_bands(display, size, range(6))
 
+
+# --- palette= ----------------------------------------------------------------
+
+MEASURED = [(57, 42, 59), (254, 254, 253), (254, 254, 0),
+            (213, 132, 21), (68, 90, 204), (112, 149, 123)]
+
+
+def random_rgb(size, seed=0):
+    import numpy
+    from PIL import Image
+
+    width, height = size
+    rng = numpy.random.default_rng(seed)
+    return Image.fromarray(rng.integers(0, 256, (height, width, 3), dtype=numpy.uint8), "RGB")
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_default_palette_is_unchanged(GPIO, spidev, smbus2, name, size):
+    """palette=None must dither exactly as before: same buffer, bit for bit."""
+    _module, display = make_display(name, GPIO, spidev, smbus2)
+    image = random_rgb(size)
+    display.set_image(image, saturation=0.5)
+    before = display.buf.copy()
+    display.set_image(image, saturation=0.5, palette=None)
+    assert (display.buf == before).all()
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_custom_palette_dithers_rgb_against_it(GPIO, spidev, smbus2, name, size):
+    """Pure colours still land on their inks when dithered against a custom palette."""
+    module, display = make_display(name, GPIO, spidev, smbus2)
+    image = banded(size, [tuple(c) for c in module.DESATURATED_PALETTE[:6]]).convert("RGB")
+    display.set_image(image, palette=MEASURED)
+    assert_bands(display, size, range(6))
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_custom_palette_changes_the_dither(GPIO, spidev, smbus2, name, size):
+    """A different target palette must actually change the result."""
+    _module, display = make_display(name, GPIO, spidev, smbus2)
+    image = random_rgb(size, seed=1)
+    display.set_image(image)
+    default = display.buf.copy()
+    display.set_image(image, palette=MEASURED)
+    assert (display.buf != default).mean() > 0.05
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_p_image_labelled_with_custom_palette_round_trips(GPIO, spidev, smbus2, name, size):
+    """Labelled with the palette also passed as palette=, every ink survives.
+
+    This palette's black (57, 42, 59) is nearer the driver's saturated blue
+    than its black, so without palette= to say otherwise it is ambiguous.
+    """
+    _module, display = make_display(name, GPIO, spidev, smbus2)
+    display.set_image(banded(size, MEASURED), palette=MEASURED)
+    assert_bands(display, size, range(6))
+
+
+@pytest.mark.parametrize("bad", [[(0, 0, 0)] * 5, [(0, 0, 0)] * 7, [(0, 0)] * 6])
+def test_palette_must_be_six_rgb_colours(GPIO, spidev, smbus2, bad):
+    _module, display = make_display("inky.inky_el133uf1", GPIO, spidev, smbus2)
+    with pytest.raises(ValueError):
+        display.set_image(random_rgb((1600, 1200)), palette=bad)

@@ -10,7 +10,7 @@ from gpiod.line import Bias, Direction, Value
 from PIL import Image
 
 from . import eeprom
-from ._spectra6 import palette_image_to_inks
+from ._spectra6 import check_palette, palette_image_to_inks
 
 BLACK = 0
 WHITE = 1
@@ -359,11 +359,13 @@ class Inky:
         if colour in (BLACK, WHITE, GREEN, BLUE, RED, YELLOW):
             self.border_colour = colour
 
-    def set_image(self, image, saturation=0.5):
+    def set_image(self, image, saturation=0.5, palette=None):
         """Copy an image to the display.
 
         :param image: PIL image to copy, must be 800x480
         :param saturation: Saturation for quantization palette - higher value results in a more saturated image
+        :param palette: Six (r, g, b) ink colours to dither against instead of the saturation blend, in the order
+            black, white, yellow, red, blue, green. Colours measured off your own panel work best.
 
         """
         if not image.size == (self.width, self.height):
@@ -372,11 +374,13 @@ class Inky:
         # Remap our sequential palette colours to display native (missing colour 4)
         remap = numpy.array([0, 1, 2, 3, 5, 6])
 
+        inks_palette = check_palette(palette) if palette is not None else None
+
         # A palette image using at most six colours is already dithered for
         # the display: map each palette entry to its ink and leave its pixels
         # alone.
         if image.mode == "P":
-            inks = palette_image_to_inks(image, self.SATURATED_PALETTE, self.DESATURATED_PALETTE)
+            inks = palette_image_to_inks(image, self.SATURATED_PALETTE, self.DESATURATED_PALETTE, inks_palette)
             if inks is not None:
                 self.buf = remap[inks.reshape((self.rows, self.cols))]
                 return
@@ -402,7 +406,7 @@ class Inky:
                 dither = Image.Dither.NONE
         else:
             # All other image should be quantized and dithered
-            palette = self._palette_blend(saturation)
+            palette = [c for rgb in inks_palette for c in rgb] if inks_palette is not None else self._palette_blend(saturation)
             palette_image.putpalette(palette)
 
         image = image.convert("RGB").quantize(6, palette=palette_image, dither=dither)
