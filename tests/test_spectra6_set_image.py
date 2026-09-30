@@ -214,3 +214,79 @@ def test_palette_must_be_six_rgb_colours(GPIO, spidev, smbus2, bad):
     _module, display = make_display("inky.inky_el133uf1", GPIO, spidev, smbus2)
     with pytest.raises(ValueError):
         display.set_image(random_rgb((1600, 1200)), palette=bad)
+
+
+# --- match="hue" --------------------------------------------------------------
+
+# The dashboard colours from issue #162, and the inks its author asked for.
+DASHBOARD = [
+    ((135, 206, 235), "blue"),    # light blue
+    ((220, 20, 60), "red"),
+    ((204, 170, 0), "yellow"),    # dark yellow
+    ((46, 139, 87), "green"),
+    ((0, 0, 0), "black"),
+    ((64, 64, 64), "black"),      # dark grey
+    ((255, 255, 255), "white"),
+    ((211, 211, 211), "white"),   # light grey
+]
+
+
+def striped(size, colours):
+    """A P image in len(colours) vertical bands, band i holding colour i."""
+    from PIL import Image
+
+    width, height = size
+    n = len(colours)
+    image = Image.new("P", size)
+    image.putpalette([c for rgb in colours for c in rgb])
+    image.putdata([(x * n) // width for x in range(width)] * height)
+    return image
+
+
+def band_inks(display, size, n):
+    width, _ = size
+    buf = display.buf.reshape(-1, width)
+    return [set(buf[:, (i * width) // n + 1:((i + 1) * width) // n - 1].ravel().tolist())
+            for i in range(n)]
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_hue_match_maps_flat_colours_as_issue_162_asks(GPIO, spidev, smbus2, name, size):
+    _module, display = make_display(name, GPIO, spidev, smbus2)
+    colours = [c for c, _ in DASHBOARD]
+    display.set_image(striped(size, colours), match="hue")
+    for band, (rgb, ink) in zip(band_inks(display, size, len(colours)), DASHBOARD):
+        assert band == {NATIVE[INKS.index(ink)]}, f"{rgb} should map to {ink}, got native {sorted(band)}"
+
+
+@pytest.mark.parametrize("which", ["SATURATED_PALETTE", "DESATURATED_PALETTE"])
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_hue_match_round_trips_the_drivers_own_palettes(GPIO, spidev, smbus2, name, size, which):
+    module, display = make_display(name, GPIO, spidev, smbus2)
+    display.set_image(banded(size, [tuple(c) for c in getattr(module, which)[:6]]), match="hue")
+    assert_bands(display, size, range(6))
+
+
+@pytest.mark.parametrize("name,size", DRIVERS)
+def test_hue_match_does_not_dither_many_colours(GPIO, spidev, smbus2, name, size):
+    """Past six colours, every pixel of one palette entry still gets one ink."""
+    import numpy
+    from PIL import Image
+
+    _module, display = make_display(name, GPIO, spidev, smbus2)
+    width, height = size
+    rng = numpy.random.default_rng(162)
+    palette = [tuple(int(v) for v in rng.integers(0, 256, 3)) for _ in range(40)]
+    indices = rng.integers(0, 40, (height, width), dtype=numpy.uint8)
+    image = Image.fromarray(indices, "P")
+    image.putpalette([c for rgb in palette for c in rgb])
+    display.set_image(image, match="hue")
+    buf = display.buf.reshape(height, width)
+    for entry in range(40):
+        assert len(set(buf[indices == entry].tolist())) == 1
+
+
+def test_match_must_be_rgb_or_hue(GPIO, spidev, smbus2):
+    _module, display = make_display("inky.inky_el133uf1", GPIO, spidev, smbus2)
+    with pytest.raises(ValueError):
+        display.set_image(random_rgb((1600, 1200)), match="lab")

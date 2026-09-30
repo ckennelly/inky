@@ -359,13 +359,17 @@ class Inky:
         if colour in (BLACK, WHITE, GREEN, BLUE, RED, YELLOW):
             self.border_colour = colour
 
-    def set_image(self, image, saturation=0.5, palette=None):
+    def set_image(self, image, saturation=0.5, palette=None, match="rgb"):
         """Copy an image to the display.
 
         :param image: PIL image to copy, must be 800x480
         :param saturation: Saturation for quantization palette - higher value results in a more saturated image
         :param palette: Six (r, g, b) ink colours to dither against instead of the saturation blend, in the order
             black, white, yellow, red, blue, green. Colours measured off your own panel work best.
+        :param match: How a palette image's colours are matched to inks. "rgb" (the default) takes the nearest ink and
+            dithers images of more than six colours; "hue" maps every colour to the ink of the same hue, or to black or
+            white if it has little colour, without dithering -- for dashboards and other flat-colour images. Distinct
+            colours can share an ink: light blue and violet both print blue, dark grey prints black.
 
         """
         if not image.size == (self.width, self.height):
@@ -375,12 +379,14 @@ class Inky:
         remap = numpy.array([0, 1, 2, 3, 5, 6])
 
         inks_palette = check_palette(palette) if palette is not None else None
+        if match not in ("rgb", "hue"):
+            raise ValueError(f'match must be "rgb" or "hue", not {match!r}')
 
         # A palette image using at most six colours is already dithered for
         # the display: map each palette entry to its ink and leave its pixels
         # alone.
         if image.mode == "P":
-            inks = palette_image_to_inks(image, self.SATURATED_PALETTE, self.DESATURATED_PALETTE, inks_palette)
+            inks = palette_image_to_inks(image, self.SATURATED_PALETTE, self.DESATURATED_PALETTE, inks_palette, match)
             if inks is not None:
                 self.buf = remap[inks.reshape((self.rows, self.cols))]
                 return
